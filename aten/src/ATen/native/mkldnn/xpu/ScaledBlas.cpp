@@ -818,4 +818,3 @@ Tensor _scaled_mm_xpu_v2(
 }
 
 } // namespace at::native
-   
