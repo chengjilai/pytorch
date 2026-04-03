@@ -45,20 +45,22 @@ namespace {
 /*
  * Scaling Type Determination (XPU):
  * -------------------------------------------
- * All scale tensors must be float32 and contiguous in the inner dim
- * (stride(1) == 1) for blockwise modes.
+ * All scale tensors must be float32.
+ * API shapes match CUDA for portability (Same shape [n, k], but strides may
+ * differ). CUDA uses col-major because of swizzling purpose, but XPU expects
+ * row-major order for oneDNN.
  *
  * For matrix A [M, K] and scale_a:
- *   - TensorWise:    scale_a is a singleton (numel==1)
- *   - RowWise:       scale_a has shape [M, 1]
- *   - BlockWise1x128: scale_a has shape [M, K//128], stride(1)==1
- *   - BlockWise128x128: scale_a has shape [M//128, K//128], stride(1)==1
+ *   - TensorWise:      scale_a is a singleton (numel==1)
+ *   - RowWise:         scale_a has shape [M, 1]
+ *   - BlockWise1x128:  scale_a has shape [M, K//128]
+ *   - BlockWise128x128: scale_a has shape [M//128, K//128]
  *
  * For matrix B [K, N] and scale_b:
- *   - TensorWise:    scale_b is a singleton (numel==1)
- *   - RowWise:       scale_b has shape [1, N]
- *   - BlockWise1x128: scale_b has shape [K//128, N], stride(1)==1
- *   - BlockWise128x128: scale_b has shape [K//128, N//128], stride(1)==1
+ *   - TensorWise:      scale_b is a singleton (numel==1)
+ *   - RowWise:         scale_b has shape [1, N]
+ *   - BlockWise1x128:  scale_b has shape [K//128, N]
+ *   - BlockWise128x128: scale_b has shape [K//128, N//128]
  *
  * Supported (A, B) scaling combinations:
  *   - (TensorWise, TensorWise)
@@ -80,16 +82,22 @@ bool is_rowwise_scaling(const at::Tensor& t, const at::Tensor& scale) {
       scale.is_contiguous());
 }
 
-// XPU uses row-major (inner-dim-contiguous) scale tensors for both A and B.
+// Scale shape checks for blockwise scaling.
 // For a matrix t [rows, cols]:
-//   BlockWise1x128:   scale has shape [rows, cols//128], stride(1)==1
-//   BlockWise128x128: scale has shape [rows//128, cols//128], stride(1)==1
+//   BlockWise1x128:   scale has shape [rows, ceil_div(cols, 128)]
+//   BlockWise128x128: scale has shape [ceil_div(rows, 128), ceil_div(cols,
+//   128)]
+// These shapes match CUDA's convention.
+// XPU accepts both row-major (contiguous) and column-major strides,
+// since it internally calls .contiguous() for oneDNN. CUDA requires
+// specific strides for cuBLAS swizzling; XPU is more permissive but
+// still validates that strides form a valid contiguous layout.
 bool is_blockwise_1x128_scaling(const at::Tensor& t, const at::Tensor& scale) {
   return (
       at::isFloat8Type(t.scalar_type()) && scale.scalar_type() == at::kFloat &&
       scale.dim() == 2 && scale.size(0) == t.size(0) &&
       scale.size(1) == ceil_div<int64_t>(t.size(1), 128) &&
-      scale.stride(1) == 1);
+      (scale.is_contiguous() || scale.t().is_contiguous()));
 }
 
 bool is_blockwise_128x128_scaling(
@@ -99,7 +107,7 @@ bool is_blockwise_128x128_scaling(
       at::isFloat8Type(t.scalar_type()) && scale.scalar_type() == at::kFloat &&
       scale.dim() == 2 && scale.size(0) == ceil_div<int64_t>(t.size(0), 128) &&
       scale.size(1) == ceil_div<int64_t>(t.size(1), 128) &&
-      scale.stride(1) == 1);
+      (scale.is_contiguous() || scale.t().is_contiguous()));
 }
 
 bool is_desired_scaling(
@@ -127,16 +135,13 @@ std::pair<ScalingType, ScalingType> get_joint_scaling(
     const at::Tensor& scale_a,
     const at::Tensor& scale_b) {
   for (auto [lhs, rhs] : options) {
-    // For blockwise, XPU scale shapes are row-major for both A and B, so B is
-    // checked directly (not transposed). For TensorWise/RowWise we use the .t()
-    // convention (matching B's transposed view) as before.
-    bool use_blockwise_b =
-        (rhs == ScalingType::BlockWise1x128 ||
-         rhs == ScalingType::BlockWise128x128);
-    const at::Tensor& b_check = use_blockwise_b ? b : b.t();
-    const at::Tensor& scale_b_check = use_blockwise_b ? scale_b : scale_b.t();
+    // Use the same b.t()/scale_b.t() convention as CUDA v1.
+    // For b=[K,N]: b.t()=[N,K], scale_b.t() is checked against [N,K].
+    // This gives API shapes matching CUDA:
+    //   1x128:   scale_b = [K//128, N]
+    //   128x128: scale_b = [K//128, N//128]
     if (is_desired_scaling(a, scale_a, lhs) &&
-        is_desired_scaling(b_check, scale_b_check, rhs)) {
+        is_desired_scaling(b.t(), scale_b.t(), rhs)) {
       return {lhs, rhs};
     }
   }
@@ -148,7 +153,7 @@ std::pair<ScalingType, ScalingType> get_joint_scaling(
       a.size(0),
       ", 1) and scale_b should be (1, ",
       b.size(1),
-      "), and both should be contiguous.\n"
+      "), and both should be contiguous.\n",
       "- For BlockWise 1x128 scaling, a and b should be float8, scales should be float, scale_a should be (",
       a.size(0),
       ", ",
@@ -157,7 +162,7 @@ std::pair<ScalingType, ScalingType> get_joint_scaling(
       ceil_div<int64_t>(b.size(0), 128),
       ", ",
       b.size(1),
-      "), both with stride(1)==1.\n"
+      ").\n"
       "- For BlockWise 128x128 scaling, a and b should be float8, scales should be float, scale_a should be (",
       ceil_div<int64_t>(a.size(0), 128),
       ", ",
@@ -166,7 +171,7 @@ std::pair<ScalingType, ScalingType> get_joint_scaling(
       ceil_div<int64_t>(b.size(0), 128),
       ", ",
       ceil_div<int64_t>(b.size(1), 128),
-      "), both with stride(1)==1.\n"
+      ").\n"
       "Got a.dtype()=",
       a.scalar_type(),
       ", scale_a.dtype()=",
@@ -387,11 +392,29 @@ Tensor& _scaled_mm_out_xpu(
   }
 
   // TODO: Scale_result is not supported by now!!
+  // API shapes match CUDA v1. oneDNN needs row-major contiguous.
+  // scale_a: [M, K//128] or [M//128, K//128]
+  // scale_b: [K//128, N] or [K//128, N//128]
+  // Because the user might passed in the CUDA's stride (col-major because of
+  // swizzling)
+  // call a contiguous() to ensure row-major for oneDNN
+  Tensor scale_a_internal = scale_a;
+  Tensor scale_b_internal = scale_b;
+  if (scaling_choice_a == ScalingType::BlockWise128x128 ||
+      scaling_choice_a == ScalingType::BlockWise1x128) {
+    scale_a_internal = scale_a.is_contiguous() ? scale_a : scale_a.contiguous();
+  }
+  if (scaling_choice_b == ScalingType::BlockWise1x128 ||
+      scaling_choice_b == ScalingType::BlockWise128x128) {
+    // CUDA v1 shapes [K//128, N] and [K//128, N//128] already match oneDNN's
+    // expected row-major layout. Just ensure contiguous.
+    scale_b_internal = scale_b.is_contiguous() ? scale_b : scale_b.contiguous();
+  }
   return _scaled_gemm(
       mat1,
       mat2,
-      scale_a,
-      scale_b,
+      scale_a_internal,
+      scale_b_internal,
       scaling_choice_a,
       scaling_choice_b,
       bias,
