@@ -6,56 +6,100 @@
 
 namespace torch::jit {
 
-static const std::unordered_map<int, int> binary_prec = {
-    {TK_IF, 1},
-    {TK_FOR, 1},
-    {TK_AND, 2},
-    {TK_OR, 2},
-    // reserve a level for unary not
-    {TK_IN, 4},
-    {TK_NOTIN, 4},
-    {'<', 4},
-    {'>', 4},
-    {TK_IS, 4},
-    {TK_ISNOT, 4},
-    {TK_EQ, 4},
-    {TK_LE, 4},
-    {TK_GE, 4},
-    {TK_NE, 4},
-    {'|', 5},
-    {'^', 6},
-    {'&', 7},
-    {TK_LSHIFT, 8},
-    {TK_RSHIFT, 8},
-    {'+', 9},
-    {'-', 9},
-    {'*', 10},
-    {'/', 10},
-    {TK_FLOOR_DIV, 10},
-    {'%', 10},
-    {'@', 10},
-    {TK_POW, 11},
-};
+namespace {
 
-static const std::unordered_map<int, int> unary_prec = {
-    {TK_NOT, 3},
-    {'~', 3},
-    {'-', 10},
-    {'*', 10},
-};
+constexpr int getBinaryPrec(int kind) {
+  switch (kind) {
+    case TK_IF:
+      return 1;
+    case TK_FOR:
+      return 1;
+    case TK_AND:
+      return 2;
+    case TK_OR:
+      return 2;
+    // reserve a level for unary not
+    case TK_IN:
+      return 4;
+    case TK_NOTIN:
+      return 4;
+    case '<':
+      return 4;
+    case '>':
+      return 4;
+    case TK_IS:
+      return 4;
+    case TK_ISNOT:
+      return 4;
+    case TK_EQ:
+      return 4;
+    case TK_LE:
+      return 4;
+    case TK_GE:
+      return 4;
+    case TK_NE:
+      return 4;
+    case '|':
+      return 5;
+    case '^':
+      return 6;
+    case '&':
+      return 7;
+    case TK_LSHIFT:
+      return 8;
+    case TK_RSHIFT:
+      return 8;
+    case '+':
+      return 9;
+    case '-':
+      return 9;
+    case '*':
+      return 10;
+    case '/':
+      return 10;
+    case TK_FLOOR_DIV:
+      return 10;
+    case '%':
+      return 10;
+    case '@':
+      return 10;
+    case TK_POW:
+      return 11;
+    default:
+      return -1;
+  }
+}
+
+constexpr int getUnaryPrec(int kind) {
+  switch (kind) {
+    case TK_NOT:
+      return 3;
+    case '~':
+      return 3;
+    case '-':
+      return 10;
+    case '*':
+      return 10;
+    default:
+      return -1;
+  }
+}
+
+} // namespace
 
 bool SharedParserData::isUnary(int kind, int* prec) {
-  auto it = unary_prec.find(kind);
-  if (it != unary_prec.end()) {
-    *prec = it->second;
+  int p = getUnaryPrec(kind);
+  if (p >= 0) {
+    *prec = p;
     return true;
   }
   return false;
 }
+
 bool SharedParserData::isBinary(int kind, int* prec) {
-  auto it = binary_prec.find(kind);
-  if (it != binary_prec.end()) {
-    *prec = it->second;
+  int p = getBinaryPrec(kind);
+  if (p >= 0) {
+    *prec = p;
     return true;
   }
   return false;
