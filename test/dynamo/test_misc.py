@@ -7036,6 +7036,18 @@ not ___dict_contains('cccccccc', G['sys'].modules)""",
 
         self.assertTrue(torch.allclose(dynamo_output, output))
 
+    def test_cross_entropy_loss_prob_target_dynamic(self):
+        x = torch.randn(3, 5)
+        target = torch.rand(3, 5).softmax(dim=1)
+        weight = torch.rand(5)
+
+        for reduction in ["none", "mean", "sum"]:
+            for w in [None, weight]:
+                expected = F.cross_entropy(x, target, weight=w, reduction=reduction)
+                compiled = torch.compile(F.cross_entropy, dynamic=True, backend="eager")
+                actual = compiled(x, target, weight=w, reduction=reduction)
+                self.assertEqual(expected, actual)
+
     def test_repr(self):
         class Config:
             def __repr__(self):
