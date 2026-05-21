@@ -56,14 +56,11 @@ class InstanceNormPerSampleGrad(torch.autograd.Function):
             running_var_ = running_var.repeat(b) if running_var is not None else None
             input_reshaped = input.contiguous().view(new_shape)
             grad_output_reshaped = grad_output.contiguous().view(new_shape)
-            mean = torch.mean(
-                input_reshaped, (0,) + tuple(range(2, input.dim())), False
-            )
-            var = torch.var(
+            var, mean = torch.var_mean(
                 input_reshaped,
                 (0,) + tuple(range(2, input.dim())),
+                correction=0,
                 keepdim=False,
-                unbiased=False,
             )
             rstd = 1 / torch.sqrt(var + eps)
 
