@@ -4763,25 +4763,71 @@ class TritonKernel(SIMDKernel[TritonCSEVariable]):
             elif reduction_type == "online_softmax_reduce":
                 accumulator_max = f"_{result_var}_max"
                 accumulator_sum = f"_{result_var}_sum"
+                block_pair_online = (
+                    not isinstance(value, tuple)
+                    and self.should_use_block_pair_online_softmax_reduce()
+                )
+                accumulator_size_str = self.dense_size_str()
+                accumulator_shape = tuple(self.dense_size_list())
+                if block_pair_online:
+                    accumulator_shape_list = self.dense_size_list()
+                    accumulator_shape_list[dim] = "1"
+                    accumulator_size_str = f"[{', '.join(accumulator_shape_list)}]"
+                    accumulator_shape = tuple(accumulator_shape_list)
 
                 # setup accumulator
                 self.body.writeline(
-                    f"{accumulator_max} = tl.full({self.dense_size_str()}, float('-inf'), {acc_type})"
+                    f"{accumulator_max} = tl.full({accumulator_size_str}, float('-inf'), {acc_type})"
                 )
                 self.body.writeline(
-                    f"{accumulator_sum} = tl.zeros({self.dense_size_str()}, {acc_type})"
+                    f"{accumulator_sum} = tl.zeros({accumulator_size_str}, {acc_type})"
                 )
 
                 # combine
                 # Note, we pass config.use_fast_math to the JITFunction
                 # since a triton kernel can not access a config.
-                if isinstance(value, tuple):
+                if block_pair_online:
+                    block_value = self.cse.generate(
+                        self.compute,
+                        where_cond(value, "float('-inf')"),
+                        dtype=value.dtype,
+                        shape=value.shape,
+                    )
+                    block_count = self.cse.generate(
+                        self.compute,
+                        where_cond("1.0", "0.0"),
+                        dtype=torch_acc_type,
+                        shape=value.shape,
+                    )
+                    block_max = f"{accumulator_max}_block"
+                    block_sum = f"{accumulator_sum}_block"
+                    self.compute.splice(
+                        f"""
+                        {block_max}, {block_sum} = triton_helpers.online_softmax_reduce(
+                            {block_value}, {block_count}, {dim}, {config.use_fast_math}
+                        )
+                        {block_max} = {self.reduction_resize(block_max)}
+                        {block_sum} = {self.reduction_resize(block_sum)}
+                        {accumulator_max}, {accumulator_sum} = triton_helpers.online_softmax_combine_with_sum(
+                            {accumulator_max}, {accumulator_sum}, {block_max}, {block_sum}, {config.use_fast_math}
+                        )
+                        """
+                    )
+                elif isinstance(value, tuple):
                     value_max, value_sum = value
                     self.compute.splice(
                         f"""
                         {accumulator_max}_next, {accumulator_sum}_next = triton_helpers.online_softmax_combine_with_sum(
                             {accumulator_max}, {accumulator_sum}, {value_max}, {value_sum}, {config.use_fast_math}
                         )
+                        """
+                    )
+
+                    # mask
+                    self.compute.splice(
+                        f"""
+                        {accumulator_max} = {where_cond(f"{accumulator_max}_next", accumulator_max)}
+                        {accumulator_sum} = {where_cond(f"{accumulator_sum}_next", accumulator_sum)}
                         """
                     )
                 else:
@@ -4793,28 +4839,39 @@ class TritonKernel(SIMDKernel[TritonCSEVariable]):
                         """
                     )
 
-                # mask
-                self.compute.splice(
-                    f"""
-                    {accumulator_max} = {where_cond(f"{accumulator_max}_next", accumulator_max)}
-                    {accumulator_sum} = {where_cond(f"{accumulator_sum}_next", accumulator_sum)}
-                    """
-                )
+                    # mask
+                    self.compute.splice(
+                        f"""
+                        {accumulator_max} = {where_cond(f"{accumulator_max}_next", accumulator_max)}
+                        {accumulator_sum} = {where_cond(f"{accumulator_sum}_next", accumulator_sum)}
+                        """
+                    )
 
                 # reduce. Similar to the final reduction for coopereative
                 # reduction
                 result_max = result_var
                 result_sum = self.cse.newvar(dtype=dtype, shape=result_max.shape)
 
-                result_var = self.online_softmax_reduce_final_reduction(
-                    self.post_loop_combine,
-                    result_max,
-                    result_sum,
-                    accumulator_max,
-                    accumulator_sum,
-                    dim,
-                    dtype,
-                )
+                if block_pair_online:
+                    result_var = (result_max, result_sum)
+                    result_max.shape = accumulator_shape  # type: ignore[attr-defined]
+                    result_sum.shape = accumulator_shape
+                    self.post_loop_combine.splice(
+                        f"""
+                        {result_max} = {accumulator_max}
+                        {result_sum} = {accumulator_sum}
+                        """
+                    )
+                else:
+                    result_var = self.online_softmax_reduce_final_reduction(
+                        self.post_loop_combine,
+                        result_max,
+                        result_sum,
+                        accumulator_max,
+                        accumulator_sum,
+                        dim,
+                        dtype,
+                    )
             else:
                 combine_fn = ir.get_reduction_combine_fn(reduction_type, src_dtype)
                 updated = combine_fn(accumulator, value)
@@ -4950,6 +5007,17 @@ class TritonKernel(SIMDKernel[TritonCSEVariable]):
         )
 
         return result_max, result_sum
+
+    def should_use_block_pair_online_softmax_reduce(self) -> bool:
+        return (
+            self.num_reduction_dims == 1
+            and self.triton_tensor_ndim() == 2
+            and self.features.get_reduction_hint(self.tiling_scores)
+            == ReductionHint.INNER
+            and V.graph.sizevars.statically_known_geq(
+                self.features.reduction_numel, 8192
+            )
+        )
 
     def _welford(self, buffer, mean, m2, weight, dim, dtype: torch.dtype):
         """
@@ -5990,6 +6058,10 @@ class TritonKernel(SIMDKernel[TritonCSEVariable]):
             # Triton will not accept an OrderedSet for autotune_hints
             "autotune_hints": set(self.autotune_hints),  # noqa: set_linter
         }
+        reduction_types = self.features.reduction_types()
+        if reduction_types == ("online_softmax_reduce",):
+            out["reduction_types"] = reduction_types
+            out["reduction_type"] = reduction_types[0]
         if self.mix_order_reduction:
             out["RSPLIT_SIZE"] = self.rsplit_size
         if config.deterministic or config.test_configs.force_filter_reduction_configs:

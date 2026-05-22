@@ -14,6 +14,7 @@ import torch
 from ...utils._ordered_set import OrderedSet
 from ...utils._sympy.functions import FloorDiv, ModularIndexing
 from ...utils._sympy.symbol import make_symbol, SymT
+from .. import ir
 from ..dependencies import Dep, extract_loop_body_with_args, MemoryDep
 from ..runtime.hints import ReductionHint
 from ..scheduler import SchedulerNode
@@ -101,6 +102,23 @@ class SIMDKernelFeatures:
 
     def reduction_nodes(self) -> list[SchedulerNode]:
         return [n for n in self.scheduler_nodes() if n.is_reduction()]
+
+    @staticmethod
+    def scheduler_node_reduction_type(node: SchedulerNode) -> str | None:
+        assert isinstance(node.node, (ir.ComputedBuffer, ir.TemplateBuffer)), (
+            f"{type(node.node)=}"
+        )
+        return node.node.get_reduction_type()
+
+    @cache_on_self
+    def reduction_types(self) -> tuple[str, ...]:
+        return tuple(
+            OrderedSet(
+                reduction_type
+                for n in self.reduction_nodes()
+                if (reduction_type := self.scheduler_node_reduction_type(n)) is not None
+            )
+        )
 
     @cache_on_self
     def buf_accesses(self) -> dict[str, list[Dep]]:

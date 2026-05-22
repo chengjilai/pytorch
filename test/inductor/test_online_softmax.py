@@ -105,6 +105,15 @@ class TestOnlineSoftmax(TestCase):
         wrapper_code = self.get_softmax_wrapper(1024)
         self.assertEqual(wrapper_code.count("for r0_offset in"), 0)
 
+    def test_codegen_huge_online_softmax_block_pair(self):
+        @torch.compile
+        def f(x):
+            return torch.softmax(x, dim=-1)
+
+        x = torch.randn(16, 8192, dtype=torch.bfloat16, device=GPU_TYPE)
+        _out, (code,) = run_and_get_code(f, x)
+        self.assertTrue("online_softmax_combine_pair" in code)
+
     @inductor_config.patch("triton.persistent_reductions", False)
     def test_sdpa(self):
         """

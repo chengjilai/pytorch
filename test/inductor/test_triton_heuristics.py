@@ -44,6 +44,7 @@ from torch._inductor.runtime.hints import (
     HeuristicType,
     native_matmul_block_numel,
     native_matmul_persistent_rblock,
+    ReductionHint,
     TRITON_MAX_BLOCK,
     TRITON_MAX_TENSOR_NUMEL,
 )
@@ -205,6 +206,48 @@ class TestTritonHeuristics(TestCase):
         cfg = autotuner.configs[0]
         self.assertEqual(cfg.kwargs["XBLOCK"], 128)
         self.assertEqual(cfg.kwargs["R0_BLOCK"], 512)
+
+    def test_huge_inner_online_softmax_reduction_configs(self):
+        device = DeviceProperties(
+            type="cuda",
+            index=0,
+            multi_processor_count=120,
+            cc=100,
+            major=10,
+            max_threads_per_block=1024,
+            warp_size=32,
+        )
+        triton_meta = {"device": device}
+        size_hints = {"x": 8192, "r0_": 262144}
+        common_meta = {
+            "reduction_hint": ReductionHint.INNER,
+            "num_load": 1,
+            "num_reduction": 1,
+        }
+
+        online_configs = _reduction_configs(
+            size_hints=size_hints,
+            inductor_meta={
+                **common_meta,
+                "reduction_type": "online_softmax_reduce",
+            },
+            triton_meta=triton_meta,
+        )
+        online_rblocks = {c.kwargs["R0_BLOCK"] for c in online_configs}
+        self.assertIn(2048, online_rblocks)
+        self.assertIn(4096, online_rblocks)
+
+        generic_configs = _reduction_configs(
+            size_hints=size_hints,
+            inductor_meta={
+                **common_meta,
+                "reduction_type": "sum",
+            },
+            triton_meta=triton_meta,
+        )
+        generic_rblocks = {c.kwargs["R0_BLOCK"] for c in generic_configs}
+        self.assertNotIn(2048, generic_rblocks)
+        self.assertNotIn(4096, generic_rblocks)
 
     def _test_artificial_zgrid(self):
         def forward(primals_1, primals_2, primals_5):

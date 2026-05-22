@@ -3388,6 +3388,8 @@ def _subkernel_fingerprint(combo_meta: dict[str, Any], i: int) -> tuple[Any, ...
         tuple(sorted(sub_meta.get("autotune_hints") or [], key=str)),
         sub_meta.get("atomic_add_found"),
         sub_meta.get("no_x_dim"),
+        sub_meta.get("reduction_type"),
+        tuple(sub_meta.get("reduction_types", ())),
         combo_meta.get(f"reduction_hint_{i}"),
         combo_meta.get(f"tile_hint_{i}"),
         sub_meta.get("add_persistent_rblock", False),
@@ -4085,6 +4087,25 @@ def _reduction_configs(
         outer_config = outer_config_opt()
 
     configs = []
+
+    if (
+        reduction_hint == ReductionHint.INNER
+        and inductor_meta.get("reduction_type") == "online_softmax_reduce"
+        and triton_meta["device"].type == "cuda"
+        and "y" not in size_hints
+        and rnumel >= 8192
+    ):
+        max_rblock = min(rnumel, TRITON_MAX_BLOCK["R0_"])
+        configs.extend(
+            make_config(
+                1,
+                rblock,
+                register_intensive=True,
+                dynamic_scale_rblock=False,
+            )
+            for rblock in (2048, 4096)
+            if rblock <= max_rblock
+        )
 
     if inductor_meta.get("add_persistent_rblock") and loads_and_red <= 8:
         xnumel = max(4096 // rnumel, 1)
