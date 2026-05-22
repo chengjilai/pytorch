@@ -2,6 +2,7 @@
 import base64
 import copy
 import functools
+import gc
 import hashlib
 import json
 import logging
@@ -39,6 +40,7 @@ from torch._inductor.codecache import (
     BypassFxGraphCache,
     CacheabilityValidator,
     CacheBase,
+    CppWrapperCodeCache,
     CUDACodeCache,
     FxGraphCache,
     FxGraphCachePickler,
@@ -435,6 +437,41 @@ class TestPyCodeCache(TestCase):
                 [sys.executable, "-c", step3], env=env
             ).decode()
             self.assertIn("debug", out)
+
+    def test_cpp_wrapper_none_output_keeps_none_refcount(self):
+        source = textwrap.dedent(
+            """
+            #include <torch/csrc/inductor/aoti_torch/c/shim.h>
+
+            void inductor_entry_impl(
+                AtenTensorHandle* input_handles,
+                AtenTensorHandle* output_handles
+            ) {
+                output_handles[0] = nullptr;
+            }
+            """
+        )
+
+        fn = CppWrapperCodeCache.load_pybinding(
+            ["std::vector<AtenTensorHandle>"],
+            source,
+            device_type="cpu",
+            num_outputs=1,
+        )
+
+        # Warm up the compile/load path before measuring return-value packing.
+        self.assertEqual(fn([]), [None])
+        gc.collect()
+        before = sys.getrefcount(None)
+
+        for _ in range(32):
+            self.assertEqual(fn([]), [None])
+
+        gc.collect()
+        after = sys.getrefcount(None)
+
+        # Returning [None] must not steal a reference from Py_None per call.
+        self.assertGreaterEqual(after, before - 2)
 
 
 @instantiate_parametrized_tests
