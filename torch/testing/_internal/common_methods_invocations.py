@@ -15924,8 +15924,6 @@ op_db: list[OpInfo] = [
             DecorateInfo(unittest.expectedFailure, "TestCompositeCompliance", "test_backward"),
             # not implemented for integer dtypes
             DecorateInfo(unittest.expectedFailure, "TestConsistency", "test_output_match", device_type="mps", dtypes=(torch.int32, torch.int16, torch.int8, torch.uint8)),
-            # tensor-likes are not close
-            DecorateInfo(unittest.expectedFailure, "TestInductorOpInfo", "test_comprehensive", device_type="cuda", dtypes=(torch.float16,)),
             # lazy dispatch failure
             DecorateInfo(unittest.expectedFailure, "TestLazyOpInfo", "test_dispatched_to_lazy"),
             # native_group_norm expects contiguous inputs on CUDA
