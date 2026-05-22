@@ -15916,12 +15916,9 @@ op_db: list[OpInfo] = [
         reference_inputs_func=reference_inputs_native_group_norm,
         sample_inputs_func=sample_inputs_native_group_norm,
         skips=(
-            DecorateInfo(unittest.expectedFailure, "TestBwdGradients", "test_fn_grad"),
             # native_group_norm expects contiguous inputs
             DecorateInfo(unittest.expectedFailure, "TestCommon", "test_noncontiguous_samples", device_type="cpu"),
             DecorateInfo(unittest.expectedFailure, "TestCommon", "test_noncontiguous_samples", device_type="cuda"),
-            # composite compliance fails with "performing in-place operation add_"
-            DecorateInfo(unittest.expectedFailure, "TestCompositeCompliance", "test_backward"),
             # not implemented for integer dtypes
             DecorateInfo(unittest.expectedFailure, "TestConsistency", "test_output_match", device_type="mps", dtypes=(torch.int32, torch.int16, torch.int8, torch.uint8)),
             # lazy dispatch failure
