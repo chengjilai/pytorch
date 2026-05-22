@@ -284,7 +284,7 @@ dtensor_compiled_fails = {
     # False positives: these have no sharding strategy and their
     # eager DTensor failure is registered elsewhere.
     xfail("nn.functional.multilabel_soft_margin_loss"),
-    xfail("nn.functional.linear_cross_entropy"),
+    xfail("nn.functional.linear_cross_entropy", "chunked"),
 }
 
 # Ops that compile successfully but fail numeric checks in eager DTensor tests.
@@ -356,6 +356,7 @@ dtensor_fails_no_strategy = {
     xfail("nanquantile"),
     xfail("nn.functional.bilinear"),
     xfail("nn.functional.linear_cross_entropy"),
+    xfail("nn.functional.linear_cross_entropy", "chunked"),
     xfail("nn.functional.multi_margin_loss"),
     xfail("nn.functional.multilabel_margin_loss"),
     xfail("nn.functional.pad", "reflect"),
