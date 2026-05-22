@@ -1623,26 +1623,32 @@ def pointwise_cat(inputs, dim=0):
 
     inputs_loaders = [inp.make_loader() for inp in inputs]
 
+    def can_load_for_all_cat_regions(inp: TensorBox) -> bool:
+        strides = inp.maybe_get_stride()
+        # Class-token style sources are broadcast through the row prefix, so
+        # loading them outside their cat region does not touch another row.
+        return strides is not None and all(
+            V.graph.sizevars.statically_known_equals(stride, 0)
+            for stride in strides[: dim + 1]
+        )
+
     def inner_fn(idx):
         idx_dim = ops.index_expr(idx[dim], torch.int64)
 
         masks = []
         masked_loads = []
         for i in range(len(inputs)):
-            start = (
-                ops.constant(0, torch.int64)
-                if i == 0
-                else ops.index_expr(inputs_ranges[i][0], torch.int64)
-            )
-            end = ops.index_expr(inputs_ranges[i][1], torch.int64)
-
-            start_cond = ops.ge(idx_dim, start)
-            end_cond = ops.lt(idx_dim, end)
             if i == 0:
-                mask = end_cond
+                end = ops.index_expr(inputs_ranges[i][1], torch.int64)
+                mask = ops.lt(idx_dim, end)
             elif i == len(inputs) - 1:
-                mask = start_cond
+                start = ops.index_expr(inputs_ranges[i][0], torch.int64)
+                mask = ops.ge(idx_dim, start)
             else:
+                start = ops.index_expr(inputs_ranges[i][0], torch.int64)
+                end = ops.index_expr(inputs_ranges[i][1], torch.int64)
+                start_cond = ops.ge(idx_dim, start)
+                end_cond = ops.lt(idx_dim, end)
                 mask = ops.and_(start_cond, end_cond)
 
             masks.append(mask)
@@ -1654,13 +1660,16 @@ def pointwise_cat(inputs, dim=0):
             # in same int bitwidth as shape
             idx_load[dim] = Identity(idx_load[dim] - inputs_ranges[i][0])
 
-            masked_loads.append(
-                ops.masked(
-                    mask,
-                    lambda: inputs_loaders[i](idx_load),
-                    0.0,  # this value should be unused
-                ),
-            )
+            if can_load_for_all_cat_regions(inputs[i]):
+                masked_loads.append(inputs_loaders[i](idx_load))
+            else:
+                masked_loads.append(
+                    ops.masked(
+                        mask,
+                        lambda: inputs_loaders[i](idx_load),
+                        0.0,  # this value should be unused
+                    ),
+                )
 
         next_val = masked_loads[-1]
         for i in range((len(inputs)) - 2, -1, -1):

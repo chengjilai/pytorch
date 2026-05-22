@@ -7476,6 +7476,21 @@ class CommonTemplate:
             (torch.randint(0, 256, size=(3, 255), dtype=torch.uint8),),
         )
 
+    @requires_gpu()
+    def test_cat_broadcast_source_load_uses_unmasked_load(self):
+        def fn(cls_token, patches, pos):
+            return torch.cat([cls_token.expand(128, 1, 192), patches], dim=1) + pos
+
+        args = (
+            torch.randn(1, 1, 192, device=GPU_TYPE),
+            torch.randn(128, 196, 192, device=GPU_TYPE),
+            torch.randn(1, 197, 192, device=GPU_TYPE),
+        )
+        expected = fn(*args)
+        actual, (code,) = run_and_get_code(torch.compile(fn, fullgraph=True), *args)
+        self.assertEqual(actual, expected)
+        FileCheck().check("tl.load(in_ptr0 +").check_same("None").run(code)
+
     def test_cat_empty(self):
         def fn_2(*tensors):
             return torch.cat(tensors)
