@@ -56,7 +56,10 @@ from .object_protocol import type_implements_nb_index, validate_sequence_index
 
 if TYPE_CHECKING:
     from torch._dynamo.codegen import PyCodegen
-    from torch._dynamo.symbolic_convert import InstructionTranslator
+    from torch._dynamo.symbolic_convert import (
+        InstructionTranslator,
+        InstructionTranslatorBase,
+    )
 
 
 def pytuple_checkexact(obj: VariableTracker) -> bool:
@@ -162,7 +165,9 @@ class BaseListVariable(VariableTracker):
                     IndexError, tx, args=["list index out of range"]
                 )
 
-    def unpack_var_sequence(self, tx: "InstructionTranslator") -> list[VariableTracker]:
+    def unpack_var_sequence(
+        self, tx: "InstructionTranslatorBase"
+    ) -> list[VariableTracker]:
         return list(self.items)
 
     def sq_length(self, tx: "InstructionTranslator") -> VariableTracker:
@@ -616,7 +621,7 @@ class RangeVariable(BaseListVariable):
         return self.python_type()(*self._as_proxy())
 
     def unpack_var_sequence(
-        self, tx: Optional["InstructionTranslator"] = None
+        self, tx: Optional["InstructionTranslatorBase"] = None
     ) -> list[VariableTracker]:
         return [variables.ConstantVariable.create(x) for x in self.as_python_constant()]
 
@@ -1083,18 +1088,13 @@ class ListVariable(CommonListMethodsVariable):
 
             tx.output.side_effects.mutation(self)
             if isinstance(key, SliceVariable):
-                if not value.has_force_unpack_var_sequence(tx):
-                    raise_observed_exception(
-                        TypeError, tx, args=["can only assign an iterable"]
-                    )
-
                 key_as_const = key.as_python_constant()
                 if key_as_const.step == 0:
                     raise_observed_exception(
                         ValueError, tx, args=["slice step cannot be zero"]
                     )
 
-                value_unpack = value.force_unpack_var_sequence(tx)
+                value_unpack = unpack_iterable(tx, value)
                 try:
                     self.items[key_as_const] = value_unpack
                 except Exception as exc:
@@ -1405,12 +1405,7 @@ class DequeVariable(CommonListMethodsVariable):
         else:
             slice_within_maxlen = None
 
-        if (
-            name == "extendleft"
-            and self.is_mutable()
-            and len(args) > 0
-            and args[0].has_force_unpack_var_sequence(tx)
-        ):
+        if name == "extendleft" and self.is_mutable() and len(args) > 0:
             if kwargs or len(args) != 1:
                 raise_args_mismatch(
                     tx,
@@ -1420,8 +1415,8 @@ class DequeVariable(CommonListMethodsVariable):
                 )
             # NOTE this is inefficient, but the alternative is to represent self.items
             # as a deque, which is a more intrusive change.
-            args[0].force_apply_to_var_sequence(
-                tx, lambda item: self.call_method(tx, "appendleft", [item], {})
+            unpack_and_apply_fn(
+                tx, args[0], lambda item: self.call_method(tx, "appendleft", [item], {})
             )
             slice_within_maxlen = slice(None, maxlen)
             result = ConstantVariable.create(None)
@@ -1674,7 +1669,9 @@ class SizeVariable(TupleVariable):
         ] + create_call_function(1, False)
         codegen.extend_output(build_torch_size)
 
-    def unpack_var_sequence(self, tx: "InstructionTranslator") -> list[VariableTracker]:
+    def unpack_var_sequence(
+        self, tx: "InstructionTranslatorBase"
+    ) -> list[VariableTracker]:
         return list(self.items)
 
     def numel(self, tx: "InstructionTranslator") -> VariableTracker:
@@ -2002,16 +1999,13 @@ class ListIteratorVariable(IteratorVariable):
     def has_unpack_var_sequence(self, tx: "InstructionTranslator") -> bool:
         return True
 
-    def unpack_var_sequence(self, tx: "InstructionTranslator") -> list[VariableTracker]:
+    def unpack_var_sequence(
+        self, tx: "InstructionTranslatorBase"
+    ) -> list[VariableTracker]:
         if self.is_exhausted:
             return []
         self.is_exhausted = True
         return list(self.items[self.index :])
-
-    def force_unpack_var_sequence(
-        self, tx: "InstructionTranslator"
-    ) -> list[VariableTracker]:
-        return self.unpack_var_sequence(tx)
 
     def reconstruct(self, codegen: "PyCodegen") -> None:
         # starting in 3.15 GET_ITER creates virtual iterators (see https://github.com/python/cpython/issues/145668), so use builtin iter instead
