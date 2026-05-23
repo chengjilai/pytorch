@@ -224,18 +224,49 @@ class TestTritonHeuristics(TestCase):
             "num_load": 1,
             "num_reduction": 1,
         }
+        online_meta = {
+            **common_meta,
+            "reduction_type": "online_softmax_reduce",
+            "xnumel": 8192,
+            "reduction_numel": 262144,
+        }
 
         online_configs = _reduction_configs(
             size_hints=size_hints,
-            inductor_meta={
-                **common_meta,
-                "reduction_type": "online_softmax_reduce",
-            },
+            inductor_meta=online_meta,
             triton_meta=triton_meta,
         )
         online_rblocks = {c.kwargs["R0_BLOCK"] for c in online_configs}
         self.assertIn(2048, online_rblocks)
         self.assertIn(4096, online_rblocks)
+
+        unaligned_configs = _reduction_configs(
+            size_hints={"x": 8192, "r0_": 65536},
+            inductor_meta={
+                **common_meta,
+                "reduction_type": "online_softmax_reduce",
+                "xnumel": 8192,
+                "reduction_numel": 50257,
+            },
+            triton_meta=triton_meta,
+        )
+        unaligned_rblocks = {c.kwargs["R0_BLOCK"] for c in unaligned_configs}
+        self.assertNotIn(2048, unaligned_rblocks)
+        self.assertNotIn(4096, unaligned_rblocks)
+
+        small_x_configs = _reduction_configs(
+            size_hints={"x": 128, "r0_": 50400},
+            inductor_meta={
+                **common_meta,
+                "reduction_type": "online_softmax_reduce",
+                "xnumel": 128,
+                "reduction_numel": 50400,
+            },
+            triton_meta=triton_meta,
+        )
+        small_x_rblocks = {c.kwargs["R0_BLOCK"] for c in small_x_configs}
+        self.assertNotIn(2048, small_x_rblocks)
+        self.assertNotIn(4096, small_x_rblocks)
 
         generic_configs = _reduction_configs(
             size_hints=size_hints,

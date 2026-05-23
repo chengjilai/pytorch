@@ -5014,8 +5014,12 @@ class TritonKernel(SIMDKernel[TritonCSEVariable]):
             and self.triton_tensor_ndim() == 2
             and self.features.get_reduction_hint(self.tiling_scores)
             == ReductionHint.INNER
+            and V.graph.sizevars.statically_known_geq(self.features.numel, 1024)
             and V.graph.sizevars.statically_known_geq(
                 self.features.reduction_numel, 8192
+            )
+            and V.graph.sizevars.statically_known_equals(
+                sympy.Mod(self.features.reduction_numel, 32), 0
             )
         )
 
@@ -6062,6 +6066,10 @@ class TritonKernel(SIMDKernel[TritonCSEVariable]):
         if reduction_types == ("online_softmax_reduce",):
             out["reduction_types"] = reduction_types
             out["reduction_type"] = reduction_types[0]
+            if is_sympy_integer_like(self.features.numel):
+                out["xnumel"] = int(self.features.numel)
+            if is_sympy_integer_like(self.features.reduction_numel):
+                out["reduction_numel"] = int(self.features.reduction_numel)
         if self.mix_order_reduction:
             out["RSPLIT_SIZE"] = self.rsplit_size
         if config.deterministic or config.test_configs.force_filter_reduction_configs:

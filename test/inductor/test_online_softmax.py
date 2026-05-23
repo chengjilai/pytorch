@@ -110,7 +110,7 @@ class TestOnlineSoftmax(TestCase):
         def f(x):
             return torch.softmax(x, dim=-1)
 
-        x = torch.randn(16, 8192, dtype=torch.bfloat16, device=GPU_TYPE)
+        x = torch.randn(1024, 8192, dtype=torch.bfloat16, device=GPU_TYPE)
         _out, (code,) = run_and_get_code(f, x)
         self.assertTrue("online_softmax_combine_pair" in code)
 

@@ -4093,7 +4093,11 @@ def _reduction_configs(
         and inductor_meta.get("reduction_type") == "online_softmax_reduce"
         and triton_meta["device"].type == "cuda"
         and "y" not in size_hints
-        and rnumel >= 8192
+        and inductor_meta.get("xnumel") is not None
+        and inductor_meta.get("reduction_numel") is not None
+        and inductor_meta["xnumel"] >= 1024
+        and inductor_meta["reduction_numel"] >= 8192
+        and inductor_meta["reduction_numel"] % 32 == 0
     ):
         max_rblock = min(rnumel, TRITON_MAX_BLOCK["R0_"])
         configs.extend(
