@@ -225,6 +225,10 @@ apply_gumbel_max_trick = (
 # dead code elimination
 dce = False
 
+# graph-level common subexpression elimination (memory-aware)
+# Folds identical computations (same op, same inputs) into a single node.
+inductor_cse = True
+
 # assume weight tensors are fixed size
 static_weight_shapes = True
 
