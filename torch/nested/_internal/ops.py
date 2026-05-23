@@ -2733,11 +2733,11 @@ def matmul_backward_default(func, *args, **kwargs):
 
     grad_self = None
     if grad_input_mask[0]:
-        grad_self = torch.matmul(grad, other.transpose(-1, -2))
+        grad_self = torch.matmul(grad, other.mT)
 
     grad_other = None
     if grad_input_mask[1]:
-        grad_other = torch.matmul(inp.transpose(-1, -2), grad)
+        grad_other = torch.matmul(inp.mT, grad)
 
     return (grad_self, grad_other)
 

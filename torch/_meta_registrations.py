@@ -1260,7 +1260,7 @@ def meta_linalg_eig(input: Tensor):
 
 
 def cloneBatchedColumnMajor(src: Tensor) -> Tensor:
-    return src.mT.clone(memory_format=torch.contiguous_format).transpose(-2, -1)
+    return src.mT.clone(memory_format=torch.contiguous_format).mT
 
 
 @register_meta(aten._cholesky_solve_helper)
@@ -1844,13 +1844,13 @@ def linalg_solve_triangular_meta(
         raise AssertionError(f"out must be TensorLike, got {type(out)}")
     checkInputsSolver(A, B, left, "linalg.solve_triangular")
     B_, A_ = _linalg_broadcast_batch_dims_name(B, A, None)
-    avoid_copy_A = A_.transpose(-2, -1).is_contiguous() and A_.is_conj()
+    avoid_copy_A = A_.mT.is_contiguous() and A_.is_conj()
     if avoid_copy_A:
         out = _maybe_resize_out(out, B_.shape)
     else:
         # reimplementation of resize_output with result F-contig
         if _resize_output_check(out, B_.shape):
-            out.resize_(B_.transpose(-2, -1).shape)
+            out.resize_(B_.mT.shape)
             out.transpose_(-2, -1)
     return out  # type: ignore[return-value]
 

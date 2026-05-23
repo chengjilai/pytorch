@@ -1116,8 +1116,7 @@ def bsr_scatter_mm(bsr, other, indices_data=None, out=None):
         )
         others = (
             as1Dbatch(other)
-            .transpose(-2, -1)
-            .view(
+            .mT.view(
                 nbatches,
                 Ns // blocksize[0],
                 blocksize[0],
@@ -1138,7 +1137,7 @@ def bsr_scatter_mm(bsr, other, indices_data=None, out=None):
                 (1, 2, 3, 4), (3, 1, 4, 2)
             )  # equivalent to .transpose(-4, -3).transpose(-2, -1).transpose(-3, -2)
             .reshape(nbatches, Ns, Ms)
-            .transpose(-2, -1)
+            .mT
         )
     else:
         raise NotImplementedError(indices_format)
@@ -1805,7 +1804,7 @@ if has_triton():
                 f"expected {expected_out_shape}, but got {out.shape}.",
             )
             check(
-                out.is_contiguous() or out.transpose(-2, -1).is_contiguous(),
+                out.is_contiguous() or out.mT.is_contiguous(),
                 "bsr_dense_mm(): only row-major/col-major `out` arguments are supported, "
                 "i.e. (out.is_contiguous() or out.transpose(-2, -1).is_contiguous()) "
                 "should be True.",
@@ -2015,9 +2014,7 @@ if has_triton():
             check_dtype(f_name, attn_mask, query.dtype)
 
         # pyrefly: ignore [not-callable]
-        sdpa = sampled_addmm(
-            attn_mask, query, key.transpose(-2, -1), beta=0.0, skip_checks=False
-        )
+        sdpa = sampled_addmm(attn_mask, query, key.mT, beta=0.0, skip_checks=False)
         if scale is None and query.size(-1) == 0 or scale == 0.0:
             check(
                 False,

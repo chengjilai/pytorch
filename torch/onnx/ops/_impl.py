@@ -242,7 +242,7 @@ def _get_qk_output_for_aten_spda(
         )
     else:
         # For other modes, return a zero tensor with correct shape
-        return torch.zeros_like(torch.matmul(Q, K.transpose(-2, -1)))
+        return torch.zeros_like(torch.matmul(Q, K.mT))
 
 
 def _validate_gqa_configuration(
@@ -274,7 +274,7 @@ def _compute_qk_output_for_mode_0(
     sqrt_scale = math.sqrt(scale_factor)
     Q_scaled = Q * sqrt_scale
     K_scaled = K_for_qk * sqrt_scale
-    return torch.matmul(Q_scaled, K_scaled.transpose(-2, -1))
+    return torch.matmul(Q_scaled, K_scaled.mT)
 
 
 def _attention_23_fake_impl(
@@ -507,7 +507,7 @@ def attention_23(
         K_scaled = K * sqrt_scale
 
         # Compute Q @ K^T
-        qk_matmul_output = torch.matmul(Q_scaled, K_scaled.transpose(-2, -1))
+        qk_matmul_output = torch.matmul(Q_scaled, K_scaled.mT)
 
         # Initialize QK output based on mode
         qk_output = qk_matmul_output  # Default case for mode 0

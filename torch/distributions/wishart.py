@@ -198,8 +198,7 @@ class Wishart(ExponentialFamily):
     @lazy_property
     def covariance_matrix(self) -> Tensor:
         return (
-            self._unbroadcasted_scale_tril
-            @ self._unbroadcasted_scale_tril.transpose(-2, -1)
+            self._unbroadcasted_scale_tril @ self._unbroadcasted_scale_tril.mT
         ).expand(self._batch_shape + self._event_shape)
 
     @lazy_property
@@ -246,7 +245,7 @@ class Wishart(ExponentialFamily):
             device=noise.device,
         )
         chol = self._unbroadcasted_scale_tril @ noise
-        return chol @ chol.transpose(-2, -1)
+        return chol @ chol.mT
 
     def rsample(
         self, sample_shape: _size = torch.Size(), max_try_correction=None

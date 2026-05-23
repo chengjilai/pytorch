@@ -6826,11 +6826,9 @@ def multi_head_attention_forward(
             raise AssertionError("FIXME: is_causal not implemented for need_weights")
 
         if attn_mask is not None:
-            attn_output_weights = torch.baddbmm(
-                attn_mask, q_scaled, k.transpose(-2, -1)
-            )
+            attn_output_weights = torch.baddbmm(attn_mask, q_scaled, k.mT)
         else:
-            attn_output_weights = torch.bmm(q_scaled, k.transpose(-2, -1))
+            attn_output_weights = torch.bmm(q_scaled, k.mT)
         if not torch.jit.is_scripting():
             del q_scaled, k
         attn_output_weights = softmax(attn_output_weights, dim=-1)

@@ -189,7 +189,7 @@ def _math_attention_inner(
 
     working_precision = torch.float64 if query.dtype == torch.float64 else torch.float32
 
-    scores = query.to(working_precision) @ key.to(working_precision).transpose(-2, -1)
+    scores = query.to(working_precision) @ key.to(working_precision).mT
 
     b = torch.arange(0, scores.size(0), device=scores.device)
     h = torch.arange(0, scores.size(1), device=scores.device)
@@ -1054,11 +1054,12 @@ def sdpa_dense_backward(
     softmax_scores = torch.exp(post_mod_scores - logsumexp.unsqueeze(-1))
     softmax_scores = torch.where(masked_out_rows.unsqueeze(-1), 0, softmax_scores)
 
-    grad_value = softmax_scores.to(query.dtype).transpose(-2, -1) @ grad_out
+    grad_value = softmax_scores.to(query.dtype).mT @ grad_out
 
-    grad_softmax_scores = grad_out.to(dtype=softmax_scores.dtype) @ value.to(
-        dtype=softmax_scores.dtype
-    ).transpose(-2, -1)
+    grad_softmax_scores = (
+        grad_out.to(dtype=softmax_scores.dtype)
+        @ value.to(dtype=softmax_scores.dtype).mT
+    )
 
     sum_scores = torch.sum(
         out.to(dtype=softmax_scores.dtype) * grad_out.to(dtype=softmax_scores.dtype),
@@ -1105,7 +1106,7 @@ def sdpa_dense_backward(
         )
 
     grad_query = grad_scores @ key
-    grad_key = grad_scores.transpose(-2, -1) @ query
+    grad_key = grad_scores.mT @ query
 
     # Reduce DK, DV along broadcasted heads.
     grad_key = grad_key.view(

@@ -225,8 +225,8 @@ class Experts(nn.Module):
             w1, w2 = self.w1, self.w2
         E = w1.shape[0]
         x_exp = x.unsqueeze(0).expand(E, -1, -1)
-        h = self.gelu(torch.bmm(x_exp, w1.transpose(-2, -1)))
-        out = torch.bmm(h, w2.transpose(-2, -1))
+        h = self.gelu(torch.bmm(x_exp, w1.mT))
+        out = torch.bmm(h, w2.mT)
         return out.sum(dim=0)
 
 
