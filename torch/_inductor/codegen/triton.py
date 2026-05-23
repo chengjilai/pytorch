@@ -4465,6 +4465,11 @@ class TritonKernel(SIMDKernel[TritonCSEVariable]):
             dtype = torch.float32 if should_upcast(dtype) else dtype
 
         assert self.inside_reduction
+        # Capture and reset the identity-padding flag so it doesn't
+        # leak from one fused reduction to the next in the same kernel.
+        loads_are_identity_padded = self._loads_are_identity_padded
+        self._loads_are_identity_padded = False
+
         masks = OrderedSet(tree.mask_name() for tree in self.range_trees)
         self.filter_masks(masks)
         masks = sorted(masks)
@@ -4588,6 +4593,13 @@ class TritonKernel(SIMDKernel[TritonCSEVariable]):
 
         def where_cond(tval, fval):
             if not cond:
+                return tval
+            # The masked accumulator update is redundant when OOB
+            # elements in the loaded data equal the reduction identity
+            acc_default = ir.Reduction.default_accumulator(
+                reduction_type, src_dtype
+            )
+            if not isinstance(acc_default, tuple) and loads_are_identity_padded:
                 return tval
             return TritonKernelOverrides.where(cond, tval, fval)
 

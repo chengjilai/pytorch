@@ -1916,6 +1916,7 @@ class Reduction(Loops):
         block_size: _IntLike,
         default: _NumLike | Sequence[_NumLike],
         input_node: IRNode | None = None,
+        src_dtype: torch.dtype = torch.float32,
     ) -> Callable[..., object]:
         dense_index = cls.check_for_split_dense_dim_reindexing(
             reduction_numel, input_node
@@ -1943,6 +1944,16 @@ class Reduction(Loops):
                     ops.index_expr(indices, index_dtype),
                     ops.index_expr(reduction_numel, index_dtype),
                 )
+                if config.triton.use_block_ptr and not isinstance(default, (tuple, list)):
+                    # ops.masked sets _load_mask which disables block ptrs.
+                    # Use ops.where to mask the result instead, preserving
+                    # block_ptr codegen where possible.
+                    result = body()
+                    result = ops.where(
+                        mask, result, ops.constant(default, src_dtype)
+                    )
+                    V.kernel._loads_are_identity_padded = True
+                    return result
                 return ops.masked(mask, body, default)
             else:
                 return body()
@@ -2072,6 +2083,7 @@ class Reduction(Loops):
             block_size,
             default,
             input_node,
+            src_dtype,
         )
 
         return cls.create_multilayer_helper(

@@ -16506,6 +16506,139 @@ def forward(self, arg0_1: "Sym(s77)", arg1_1: "Sym(s27)", arg2_1: "Sym(s53)", ar
             print(f"{ms=:.3f}")
 
     @skip_if_halide
+    @config.patch(
+        {
+            "triton.use_block_ptr": True,
+            "triton.cooperative_reductions": False,
+            "split_reductions": True,
+        }
+    )
+    def test_split_reduction_block_ptr_sum(self):
+        N = 100003
+        x = torch.randn(1, N, device=self.device)
+
+        def f(x):
+            return x.sum()
+
+        expected = f(x)
+        actual = torch.compile(f)(x)
+        self.assertTrue(
+            torch.allclose(expected, actual, atol=1e-2, rtol=1e-2),
+            f"{expected=} {actual=}",
+        )
+
+    @skip_if_halide
+    @config.patch(
+        {
+            "triton.use_block_ptr": True,
+            "triton.cooperative_reductions": False,
+            "split_reductions": True,
+        }
+    )
+    def test_split_reduction_block_ptr_max(self):
+        N = 100003
+        x = torch.randn(1, N, device=self.device)
+
+        def f(x):
+            return x.max()
+
+        expected = f(x)
+        actual = torch.compile(f)(x)
+        self.assertEqual(expected, actual)
+
+    @skip_if_halide
+    @config.patch(
+        {
+            "triton.use_block_ptr": True,
+            "triton.cooperative_reductions": False,
+            "split_reductions": True,
+        }
+    )
+    def test_split_reduction_block_ptr_min(self):
+        N = 100003
+        x = torch.randn(1, N, device=self.device)
+
+        def f(x):
+            return x.min()
+
+        expected = f(x)
+        actual = torch.compile(f)(x)
+        self.assertEqual(expected, actual)
+
+    @skip_if_halide
+    @config.patch(
+        {
+            "triton.use_block_ptr": True,
+            "triton.cooperative_reductions": False,
+            "split_reductions": True,
+        }
+    )
+    def test_split_reduction_block_ptr_prod(self):
+        N = 100003
+        x = torch.randn(1, N, device=self.device)
+
+        def f(x):
+            return x.prod()
+
+        expected = f(x)
+        actual = torch.compile(f)(x)
+        self.assertTrue(
+            torch.allclose(expected, actual, atol=1e-2, rtol=1e-2),
+            f"{expected=} {actual=}",
+        )
+
+    @skip_if_halide
+    @config.patch(
+        {
+            "triton.use_block_ptr": True,
+            "triton.cooperative_reductions": False,
+            "split_reductions": True,
+        }
+    )
+    def test_split_reduction_block_ptr_outer(self):
+        # Outer reduction (dim=0) with block pointers.
+        # Tests split reduction on a non-scalar output.
+        M = 100003
+        N = 32
+        x = torch.randn(M, N, device=self.device)
+
+        def f(x):
+            return x.sum(dim=0)
+
+        expected = f(x)
+        actual = torch.compile(f)(x)
+        self.assertTrue(
+            torch.allclose(expected, actual, atol=1e-2, rtol=1e-2),
+            f"{expected=} {actual=}",
+        )
+
+    @skip_if_halide
+    @config.patch(
+        {
+            "triton.use_block_ptr": True,
+            "triton.cooperative_reductions": False,
+            "split_reductions": True,
+        }
+    )
+    def test_non_persistent_reduction_no_redundant_masking(self):
+        # When _multilayer_wrap_loader pads OOB with the identity,
+        # the accumulator masking is redundant. Verify numerical
+        # correctness — the codegen optimization is validated by
+        # MTIA GLOBE tests on hardware.
+        N = 100003
+        x = torch.randn(1, N, device=self.device)
+
+        def f(x):
+            return x.sum()
+
+        expected = f(x)
+        actual = torch.compile(f)(x)
+        self.assertTrue(
+            torch.allclose(expected, actual, atol=1e-2, rtol=1e-2),
+            f"{expected=} {actual=}",
+        )
+
+    @skip_if_halide
     @expectedFailureCodegenDynamic
     def test_special_polygamma(self):
         fn = torch.special.polygamma
