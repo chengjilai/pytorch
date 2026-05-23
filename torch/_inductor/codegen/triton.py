@@ -5012,6 +5012,7 @@ class TritonKernel(SIMDKernel[TritonCSEVariable]):
         return (
             self.num_reduction_dims == 1
             and self.triton_tensor_ndim() == 2
+            and self.features.reduction_types() == ("online_softmax_reduce",)
             and self.features.get_reduction_hint(self.tiling_scores)
             == ReductionHint.INNER
             and V.graph.sizevars.statically_known_geq(self.features.numel, 1024)

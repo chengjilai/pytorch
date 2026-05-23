@@ -112,7 +112,18 @@ class TestOnlineSoftmax(TestCase):
 
         x = torch.randn(1024, 8192, dtype=torch.bfloat16, device=GPU_TYPE)
         _out, (code,) = run_and_get_code(f, x)
-        self.assertTrue("online_softmax_combine_pair" in code)
+        self.assertTrue("_max_block" in code)
+        self.assertTrue("tl.full([XBLOCK, 1], float('-inf')" in code)
+
+    def test_codegen_huge_online_softmax_block_pair_skips_extra_reduction(self):
+        @torch.compile
+        def f(x):
+            return torch.softmax(x, dim=-1).sum()
+
+        x = torch.randn(1024, 8192, dtype=torch.bfloat16, device=GPU_TYPE)
+        _out, (code,) = run_and_get_code(f, x)
+        self.assertTrue("online_softmax_reduce" in code)
+        self.assertNotIn("_max_block", code)
 
     @inductor_config.patch("triton.persistent_reductions", False)
     def test_sdpa(self):
