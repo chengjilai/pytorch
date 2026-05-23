@@ -102,7 +102,6 @@ from .lists import (
     ListIteratorVariable,
     ListVariable,
     RangeVariable,
-    SizeVariable,
     TupleIteratorVariable,
     TupleVariable,
 )
@@ -669,17 +668,6 @@ class BuiltinVariable(BaseBuiltinVariable):
             )
 
         # Special cases - lower precedence but still prefer these over constant folding
-
-        # List-like addition (e.g. [1, 2] + [3, 4])
-        def tuple_add_handler(
-            tx: "InstructionTranslator", a: BaseListVariable, b: VariableTracker
-        ) -> VariableTracker:
-            return TupleVariable([*a.items, *b.unpack_var_sequence(tx)])
-
-        def size_add_handler(
-            tx: "InstructionTranslator", a: BaseListVariable, b: VariableTracker
-        ) -> VariableTracker:
-            return SizeVariable([*a.items, *b.unpack_var_sequence(tx)])
 
         def create_cmp_op_handlers(
             op: Callable[..., Any],
