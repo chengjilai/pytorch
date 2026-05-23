@@ -15,7 +15,7 @@ import re
 import tempfile
 from collections.abc import Callable
 from itertools import chain, count
-from typing import Any, Protocol, TYPE_CHECKING
+from typing import Any, Literal, Protocol, TYPE_CHECKING
 
 import sympy
 from sympy import Expr
@@ -2348,32 +2348,19 @@ class PythonWrapperCodegen(CodeGen):
     ):
         code = self.prefix
 
-        @functools.cache
-        def sizeof(name):
-            code.writeline(f"{name}_size = {name}.size()")
-            return f"{name}_size"
-
-        @functools.cache
-        def strideof(name):
-            code.writeline(f"{name}_stride = {name}.stride()")
-            return f"{name}_stride"
-
         if isinstance(value, sympy.Expr):
             if not isinstance(value, sympy.Symbol) or value in bound_vars:
                 return
             code.writeline(f"{value} = {name}")
             bound_vars.add(value)
-        elif isinstance(value, ir.TensorBox):
-            for dim, size in enumerate(value.get_size()):
-                if isinstance(size, sympy.Symbol) and size not in bound_vars:
-                    code.writeline(f"{size} = {sizeof(name)}[{dim}]")
-                    bound_vars.add(size)
-            for dim, stride in enumerate(value.get_stride()):
-                if isinstance(stride, sympy.Symbol) and stride not in bound_vars:
-                    code.writeline(f"{stride} = {strideof(name)}[{dim}]")
-                    bound_vars.add(stride)
         elif isinstance(
-            value, (ir.TorchBindObject, ir.GeneratorState, ir.OpaqueObjectState)
+            value,
+            (
+                ir.TensorBox,
+                ir.TorchBindObject,
+                ir.GeneratorState,
+                ir.OpaqueObjectState,
+            ),
         ):
             return
         else:
@@ -2398,6 +2385,45 @@ class PythonWrapperCodegen(CodeGen):
         ] + [(k, v) for k, v in graph_inputs.items() if not isinstance(v, sympy.Symbol)]
         for name, value in inputs:
             self.codegen_input_symbol_assignment(name, value, bound_vars)
+
+        def bind_input_symbol(
+            sym: sympy.Symbol,
+            input_name: str,
+            kind: Literal["size", "stride"],
+            dim: int,
+        ) -> None:
+            if sym in bound_vars:
+                return
+            if kind == "size":
+                self.prefix.writeline(f"{sym} = {input_name}.size()[{dim}]")
+            else:
+                self.prefix.writeline(f"{sym} = {input_name}.stride()[{dim}]")
+            bound_vars.add(sym)
+
+        for sym, (input_name, kind, dim) in V.graph.symbolic_input_sources.items():
+            if sym in bound_vars:
+                continue
+            if input_name not in graph_inputs:
+                continue
+            bind_input_symbol(sym, input_name, kind, dim)
+
+        # Input size/stride assertions are emitted after codegen_inputs(), but
+        # their expected tuples can reference bare symbols that are not explicit
+        # graph inputs. Bind only symbols needed for those graph-input asserts.
+        if config.size_asserts:
+            for input_name, value in inputs:
+                if not isinstance(value, ir.TensorBox):
+                    continue
+                if input_name not in V.graph.graph_input_names:
+                    continue
+                if sympy_product(value.get_size()) == 0:
+                    continue
+                for dim, size in enumerate(value.get_size()):
+                    if isinstance(size, sympy.Symbol):
+                        bind_input_symbol(size, input_name, "size", dim)
+                for dim, stride in enumerate(value.get_stride()):
+                    if isinstance(stride, sympy.Symbol):
+                        bind_input_symbol(stride, input_name, "stride", dim)
 
         def _verify_input_symbol_assignment(
             value: ir.TensorBox,

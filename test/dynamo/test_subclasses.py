@@ -2470,7 +2470,7 @@ class GraphModule(torch.nn.Module):
             **kwargs: Any,
         ):
             if dynamic:
-                self.assertEqual(static_input_idxs, [2, 3, 4])
+                self.assertEqual(static_input_idxs, [2, 4])
             else:
                 self.assertEqual(static_input_idxs, [1, 2])
             return gm

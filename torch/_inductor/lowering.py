@@ -12,7 +12,7 @@ import sys
 import warnings
 from collections import defaultdict
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from typing import Any, cast, TYPE_CHECKING, TypeGuard, TypeVar
+from typing import Any, cast, Literal, TYPE_CHECKING, TypeGuard, TypeVar
 from typing_extensions import ParamSpec
 from unittest.mock import patch
 
@@ -8132,11 +8132,29 @@ def sym_constrain_range(a, min=None, max=None):
     return None
 
 
+def _record_symbolic_input_source(
+    tensor: Any,
+    dim: int,
+    expr: sympy.Expr,
+    kind: Literal["size", "stride"],
+) -> None:
+    if not isinstance(expr, sympy.Symbol) or not isinstance(tensor, TensorBox):
+        return
+
+    if not tensor.is_input_buffer():
+        return
+
+    name = tensor.get_name()
+    V.graph.symbolic_input_sources.setdefault(expr, (name, kind, int(dim)))
+
+
 @register_lowering(aten.sym_size.int)
 def sym_size(a, dim):
     val = V.graph.current_node.meta["val"]
     if isinstance(val, torch.SymInt):
-        return val.node.expr
+        expr = val.node.expr
+        _record_symbolic_input_source(a, dim, expr, "size")
+        return expr
     else:
         return int(val)
 
@@ -8145,7 +8163,9 @@ def sym_size(a, dim):
 def sym_stride(a, dim):
     val = V.graph.current_node.meta["val"]
     if isinstance(val, torch.SymInt):
-        return val.node.expr
+        expr = val.node.expr
+        _record_symbolic_input_source(a, dim, expr, "stride")
+        return expr
     else:
         return int(val)
 
